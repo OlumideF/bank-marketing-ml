@@ -8,3 +8,6 @@ matplotlib>=3.8
 seaborn>=0.13
 jupyterlab>=4.0
 ipykernel
+streamlit>=1.32
+plotly>=5.18
+joblib>=1.3

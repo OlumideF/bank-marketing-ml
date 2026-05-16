@@ -12,7 +12,7 @@
 
 ## 🎯 Key Result
 
-> **Calling the top 20% of customers ranked by our model captures ~78% of all subscribers — a 3.9× improvement over random calling.**
+> **Calling the top 20% of customers ranked by our production model captures ~66% of all subscribers — a ~3.3× improvement over random calling.** (Run `python src/pipeline.py` for exact numbers on your machine.)
 
 This project demonstrates senior-level ML practice: ranking customers by subscription probability rather than just classifying them, handling class imbalance correctly, avoiding a common data leakage trap, and using SHAP to provide economic interpretation — not just model metrics.
 
@@ -25,9 +25,17 @@ bank-marketing-ml/
 ├── data/                          # Download script populates this
 ├── notebooks/
 │   └── 01_full_walkthrough.ipynb  # Step-by-step narrative
+├── app.py                         # Streamlit dashboard
+├── reports/
+│   └── report.html                # Generated executive report
 ├── src/
+│   ├── bank_ml.py                 # Shared training, scoring, artifacts
 │   ├── pipeline.py                # Full ML pipeline (EDA → train → evaluate)
+│   ├── generate_report.py         # Plotly HTML executive report
+│   ├── generate_model_card.py     # model_card.md writer
+│   ├── score_customers.py         # CLI: rank a CSV for the call center
 │   └── eda.py                     # Standalone EDA plots
+│   model_card.md                  # Google-style model documentation
 ├── outputs/                       # Generated figures (gitignored)
 ├── requirements.txt
 └── README.md
@@ -139,11 +147,48 @@ cd bank-marketing-ml
 pip install -r requirements.txt
 
 # 3. Run the pipeline (downloads data automatically)
-python src/pipeline.py
+python src/pipeline.py --cv
 
-# 4. Or explore the notebook
+# 4. Score a new customer list (production model)
+python src/score_customers.py -i customers.csv -o outputs/ranked_customers.csv
+
+# 5. Or explore the notebook
 jupyter lab notebooks/01_full_walkthrough.ipynb
 ```
+
+### Pipeline CLI
+
+```bash
+python src/pipeline.py                          # train both models, plots, report, model card
+python src/pipeline.py --no-duration            # production model only
+python src/pipeline.py --threshold 0.4          # F1 / confusion matrix threshold
+python src/pipeline.py --output-dir outputs     # custom output directory
+python src/pipeline.py --cv                     # 5-fold StratifiedKFold comparison table
+```
+
+Outputs: `outputs/artifacts.joblib`, `outputs/cv_comparison.csv`, `outputs/evaluation_dashboard.png`, `reports/report.html`, `model_card.md`.
+
+---
+
+## Interfaces
+
+### Streamlit Dashboard
+
+```bash
+streamlit run app.py
+```
+
+Interactive multi-page app: model performance (ROC/PR, confusion matrix, score distribution), lift curves and ROI calculator, SHAP explorer, and CSV upload to rank new customers with the production model.
+
+Deployed: [link]
+
+### HTML Report
+
+```bash
+python src/generate_report.py
+```
+
+Then open `reports/report.html` in any browser. The pipeline also generates this automatically at the end of each run.
 
 ---
 
