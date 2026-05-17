@@ -156,6 +156,7 @@ def parse_args():
     p.add_argument("--cv", action="store_true", help="Run 5-fold stratified CV comparison")
     p.add_argument("--skip-report", action="store_true", help="Skip HTML report generation")
     p.add_argument("--skip-plots", action="store_true", help="Skip matplotlib figures")
+    p.add_argument("--skip-eda", action="store_true", help="Skip exploratory data analysis")
     return p.parse_args()
 
 
@@ -180,7 +181,14 @@ def main():
     print("  UCI Bank Marketing — ML Pipeline")
     print("=" * 60)
 
-    print("\n[1/7] Loading, engineering, and training...")
+    if not getattr(args, "skip_eda", False):
+        print("\n[1/8] Exploratory data analysis...")
+        from eda import run_eda
+        run_eda(out_dir=out_dir, verbose=True)
+    else:
+        print("\n[1/8] EDA skipped")
+
+    print("\n[2/8] Loading, engineering, and training...")
     artifacts = train_all_variants(
         verbose=True,
         variant_keys=variant_keys,
@@ -190,14 +198,14 @@ def main():
     results = artifacts["results"]
 
     if args.cv and len(variant_keys) == len(VARIANTS):
-        print("\n[2/7] Cross-validation (5-fold StratifiedKFold)...")
+        print("\n[3/8] Cross-validation (5-fold StratifiedKFold)...")
         cv_df = cross_validate_models(n_splits=5, verbose=True)
         artifacts["cv_comparison"] = cv_df
         cv_df.to_csv(out_dir / "cv_comparison.csv", index=False)
         print(f"  Saved: {out_dir / 'cv_comparison.csv'}")
         print_cv_table(cv_df)
     else:
-        print("\n[2/7] Cross-validation skipped (use --cv for full comparison)")
+        print("\n[3/8] Cross-validation skipped (use --cv for full comparison)")
 
     for variant, res in results.items():
         print(f"\n{'-' * 50}")
@@ -211,21 +219,21 @@ def main():
             f"Recall @ top 20%: {res['recall_20']:.1f}%"
         )
 
-    print("\n[3/7] Saving artifacts...")
+    print("\n[4/8] Saving artifacts...")
     save_artifacts(artifacts)
 
     if not args.skip_plots:
-        print("\n[4/7] Evaluation plots...")
+        print("\n[5/8] Evaluation plots...")
         make_plots(results, out_dir, args.threshold)
         prod_key = "v2_no_duration" if "v2_no_duration" in results else list(results.keys())[-1]
         res = results[prod_key]
         X_te_proc = res["preprocessor"].transform(artifacts["X_test"])
-        print("\n[5/7] SHAP plots...")
+        print("\n[6/8] SHAP plots...")
         make_shap_plots(res["clf"], X_te_proc, res["feature_names"], out_dir)
     else:
-        print("\n[4-5/7] Plots skipped")
+        print("\n[5-6/8] Plots skipped")
 
-    print("\n[6/7] Lift curve CSV...")
+    print("\n[7/8] Lift curve CSV...")
     prod_key = "v2_no_duration" if "v2_no_duration" in results else list(results.keys())[-1]
     pct, lifts, recalls = lift_curve_data(
         results[prod_key]["y_test"], results[prod_key]["proba"],
@@ -234,7 +242,7 @@ def main():
         "pct_called": pct, "lift": lifts, "recall_pct": [r * 100 for r in recalls],
     }).to_csv(out_dir / "lift_curve_data.csv", index=False)
 
-    print("\n[7/7] Model card + report...")
+    print("\n[8/8] Model card + report...")
     from generate_model_card import write_model_card
     card_path = write_model_card(artifacts)
     print(f"  Saved: {card_path}")

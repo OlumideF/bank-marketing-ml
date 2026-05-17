@@ -96,6 +96,19 @@ xgb.XGBClassifier(
 )
 ```
 
+### Exploratory Data Analysis
+
+Descriptive analysis with static and interactive visualizations:
+
+```bash
+python src/eda.py                    # figures -> outputs/eda_*.png
+python src/pipeline.py               # EDA runs automatically (use --skip-eda to omit)
+```
+
+**Outputs:** `eda_overview.png`, `eda_numeric.png`, `eda_categorical.png`, `eda_campaign.png`, `eda_summary.json`, `eda_numeric_stats.csv`
+
+**Streamlit:** open the **Exploratory Data Analysis** page for interactive charts (class balance, subscription rates by category, correlation heatmap, numeric histograms).
+
 ### Feature Engineering
 Three new features derived from domain knowledge:
 - `was_contacted_before` — binary flag for prior campaign contact
@@ -178,7 +191,7 @@ Outputs: `outputs/artifacts.joblib`, `outputs/cv_comparison.csv`, `outputs/evalu
 streamlit run app.py
 ```
 
-Interactive multi-page app: model performance (ROC/PR, confusion matrix, score distribution), lift curves and ROI calculator, SHAP explorer, and CSV upload to rank new customers with the production model.
+Interactive multi-page app: **exploratory data analysis**, model performance (ROC/PR, confusion matrix, score distribution), lift curves and ROI calculator, SHAP explorer, and CSV upload to rank new customers with the production model.
 
 Deployed: [link]
 
@@ -195,6 +208,10 @@ Then open `reports/report.html` in any browser. The pipeline also generates this
 ## 📊 Evaluation Dashboard
 
 ![Evaluation Dashboard](outputs/evaluation_dashboard.png)
+
+## 🔍 Exploratory Data Analysis
+
+![EDA Overview](outputs/eda_overview.png)
 
 ---
 

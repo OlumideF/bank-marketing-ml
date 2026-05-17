@@ -23,11 +23,25 @@ from bank_ml import (  # noqa: E402
     ARTIFACTS_PATH,
     COLOR_LEAKY,
     COLOR_PRODUCTION,
+    OUT_DIR,
     VARIANTS,
     confusion_at_threshold,
     load_artifacts,
+    load_data,
     roi_estimates,
     score_customers,
+)
+from eda import (  # noqa: E402
+    CAT_FEATURES,
+    NUM_FEATURES,
+    MACRO_FEATURES,
+    plotly_class_balance,
+    plotly_corr_heatmap,
+    plotly_numeric_hist,
+    plotly_scatter_macro,
+    plotly_subscription_by,
+    plotly_subscription_by_binned,
+    summary_statistics,
 )
 
 st.set_page_config(
@@ -66,6 +80,11 @@ def get_artifacts():
     return load_artifacts(retrain_if_missing=True)
 
 
+@st.cache_data(show_spinner="Loading dataset for EDA...")
+def get_raw_data():
+    return load_data()
+
+
 def metric_cards(res):
     cols = st.columns(3)
     metrics = [
@@ -102,6 +121,7 @@ with st.sidebar:
     page = st.radio(
         "Page",
         [
+            "Exploratory Data Analysis",
             "Model Performance",
             "Lift & Business Value",
             "SHAP Explorer",
@@ -122,8 +142,91 @@ with st.sidebar:
 res_sel = results[model_choice]
 color_sel = COLOR_PRODUCTION if model_choice == "v2_no_duration" else COLOR_LEAKY
 
-# ── Page 1: Model Performance ──────────────────────────────────────────────
-if page == "Model Performance":
+# ── Page: Exploratory Data Analysis ─────────────────────────────────────────
+if page == "Exploratory Data Analysis":
+    st.subheader("Exploratory Data Analysis")
+    st.caption("Descriptive statistics on the raw UCI Bank Marketing dataset (before modeling).")
+
+    raw_df = get_raw_data()
+    eda_summary = summary_statistics(raw_df)
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Rows", f"{eda_summary['n_rows']:,}")
+    m2.metric("Columns", eda_summary["n_columns"])
+    m3.metric("Subscribe rate", f"{eda_summary['positive_rate_pct']}%")
+    m4.metric("Class ratio", f"{eda_summary['class_ratio']}:1")
+    m5.metric("Duration corr.", eda_summary["duration_corr_target"])
+
+    st.warning(
+        "Call **duration** correlates strongly with the target (~0.39) but is only known "
+        "after a call ends — we exclude it from the production model."
+    )
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Overview", "Numeric", "Categorical", "Correlations", "Campaign", "Summary tables",
+    ])
+
+    with tab1:
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.plotly_chart(plotly_class_balance(raw_df), use_container_width=True)
+        with c2:
+            st.plotly_chart(plotly_subscription_by(raw_df, "month"), use_container_width=True)
+        st.plotly_chart(plotly_subscription_by_binned(raw_df, "euribor3m", bins=10), use_container_width=True)
+        for img_name in ["eda_overview.png", "eda_campaign.png"]:
+            img_path = OUT_DIR / img_name
+            if img_path.exists():
+                st.image(str(img_path), caption=img_name.replace("_", " ").replace(".png", "").title())
+
+    with tab2:
+        num_col = st.selectbox("Numeric feature", NUM_FEATURES, index=0)
+        st.plotly_chart(plotly_numeric_hist(raw_df, num_col), use_container_width=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.plotly_chart(
+                plotly_scatter_macro(raw_df, "age", "euribor3m"), use_container_width=True,
+            )
+        with c2:
+            st.plotly_chart(
+                plotly_scatter_macro(raw_df, "campaign", "cons.conf.idx"), use_container_width=True,
+            )
+        if (OUT_DIR / "eda_numeric.png").exists():
+            st.image(str(OUT_DIR / "eda_numeric.png"), caption="Numeric distributions & correlation matrix")
+
+    with tab3:
+        cat_col = st.selectbox("Categorical feature", CAT_FEATURES, index=0)
+        top_n = st.slider("Show top N categories by rate", 5, 25, 12)
+        st.plotly_chart(
+            plotly_subscription_by(raw_df, cat_col, top_n=top_n), use_container_width=True,
+        )
+        if (OUT_DIR / "eda_categorical.png").exists():
+            st.image(str(OUT_DIR / "eda_categorical.png"), caption="Categorical subscription rates")
+
+    with tab4:
+        st.plotly_chart(plotly_corr_heatmap(raw_df), use_container_width=True)
+        st.markdown("**Correlation with subscription (numeric features)**")
+        corr_df = eda_summary["corr_with_target"].reset_index()
+        corr_df.columns = ["feature", "correlation"]
+        st.dataframe(corr_df, use_container_width=True, hide_index=True)
+
+    with tab5:
+        st.plotly_chart(plotly_subscription_by(raw_df, "poutcome", top_n=None), use_container_width=True)
+        st.plotly_chart(plotly_numeric_hist(raw_df, "campaign"), use_container_width=True)
+        st.plotly_chart(plotly_numeric_hist(raw_df, "previous"), use_container_width=True)
+
+    with tab6:
+        st.markdown("**Numeric descriptive statistics**")
+        st.dataframe(eda_summary["numeric_summary"], use_container_width=True)
+        if len(eda_summary["missing"]):
+            st.markdown("**Missing values**")
+            miss = pd.DataFrame({"count": eda_summary["missing"], "pct": eda_summary["missing_pct"]})
+            st.dataframe(miss, use_container_width=True)
+        else:
+            st.success("No missing values in the dataset.")
+        st.caption("Run `python src/eda.py` to regenerate static figures in outputs/.")
+
+# ── Page: Model Performance ────────────────────────────────────────────────
+elif page == "Model Performance":
     st.subheader("Model Performance")
     metric_cards(res_sel)
 
@@ -253,8 +356,8 @@ elif page == "SHAP Explorer":
         arrow = "↑" if item["direction"] == "increases" else "↓"
         st.markdown(f"**{item['feature']}** {arrow} — {item['text']}")
 
-# ── Page 4: Score New Customers ──────────────────────────────────────────────
-else:
+# ── Page: Score New Customers ────────────────────────────────────────────────
+elif page == "Score New Customers":
     st.subheader("Score New Customers")
     st.caption("Upload a CSV with the UCI schema (semicolon-separated). Target column `y` is optional.")
 
