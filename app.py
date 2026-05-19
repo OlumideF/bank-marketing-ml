@@ -1,6 +1,7 @@
 """
 Streamlit dashboard — UCI Bank Marketing ML
-Run: streamlit run app.py
+Run: python -m streamlit run app.py
+     Or double-click preview.bat (Windows)
 """
 
 from __future__ import annotations
@@ -9,7 +10,6 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import shap
@@ -34,7 +34,6 @@ from bank_ml import (  # noqa: E402
 from eda import (  # noqa: E402
     CAT_FEATURES,
     NUM_FEATURES,
-    MACRO_FEATURES,
     plotly_class_balance,
     plotly_corr_heatmap,
     plotly_numeric_hist,
@@ -43,6 +42,14 @@ from eda import (  # noqa: E402
     plotly_subscription_by_binned,
     summary_statistics,
 )
+
+PAGES = [
+    "Exploratory Data Analysis",
+    "Model Performance",
+    "Lift & Business Value",
+    "SHAP Explorer",
+    "Score New Customers",
+]
 
 st.set_page_config(
     page_title="Bank Marketing ML",
@@ -75,12 +82,16 @@ st.markdown(
 )
 
 
-@st.cache_resource(show_spinner="Loading models (run pipeline if first time)...")
+@st.cache_resource(show_spinner="Loading trained models...")
 def get_artifacts():
-    return load_artifacts(retrain_if_missing=True)
+    if not ARTIFACTS_PATH.exists():
+        raise FileNotFoundError(
+            f"Missing {ARTIFACTS_PATH}. Run: python src/pipeline.py"
+        )
+    return load_artifacts(retrain_if_missing=False)
 
 
-@st.cache_data(show_spinner="Loading dataset for EDA...")
+@st.cache_data(show_spinner="Loading dataset...")
 def get_raw_data():
     return load_data()
 
@@ -100,53 +111,37 @@ def metric_cards(res):
         )
 
 
-artifacts = get_artifacts()
-results = artifacts["results"]
-stats = artifacts["dataset_stats"]
-shap_info = artifacts["shap"]
-
+# ── Sidebar (page first — models load only when needed) ─────────────────────
 with st.sidebar:
-    st.header("Controls")
-    model_choice = st.radio(
-        "Model",
-        ["v2_no_duration", "v1_with_duration"],
-        format_func=lambda k: "v2 — Production (no duration)" if k == "v2_no_duration" else "v1 — With duration (leaky)",
-    )
-    if model_choice == "v1_with_duration":
-        st.warning(
-            "⚠️ This model uses call duration — a feature only known AFTER the call. "
-            "It cannot be deployed. Shown here for benchmarking only."
-        )
-
-    page = st.radio(
-        "Page",
-        [
-            "Exploratory Data Analysis",
-            "Model Performance",
-            "Lift & Business Value",
-            "SHAP Explorer",
-            "Score New Customers",
-        ],
-    )
+    st.header("Navigation")
+    page = st.radio("Page", PAGES, index=0)
 
     st.divider()
-    st.subheader("Dataset stats")
-    st.write(f"**Total rows:** {stats['n_rows']:,}")
-    st.write(f"**Positive rate:** {stats['positive_rate']*100:.1f}%")
-    st.write(f"**Train size:** {stats['train_size']:,}")
-    st.write(f"**Test size:** {stats['test_size']:,}")
+    if page == "Exploratory Data Analysis":
+        st.info("EDA uses raw data only — no model load required.")
+        if st.button("Open static EDA images folder"):
+            st.caption(str(OUT_DIR.resolve()))
+    else:
+        model_choice = st.radio(
+            "Model",
+            ["v2_no_duration", "v1_with_duration"],
+            format_func=lambda k: (
+                "v2 — Production (no duration)" if k == "v2_no_duration"
+                else "v1 — With duration (leaky)"
+            ),
+        )
+        if model_choice == "v1_with_duration":
+            st.warning(
+                "This model uses call duration — known only AFTER the call. "
+                "Benchmark only, not deployable."
+            )
 
-    if not ARTIFACTS_PATH.exists():
-        st.info("Run `python src/pipeline.py` to refresh artifacts.")
+    st.divider()
+    st.caption("Dashboard URL: http://localhost:8501")
 
-res_sel = results[model_choice]
-color_sel = COLOR_PRODUCTION if model_choice == "v2_no_duration" else COLOR_LEAKY
-
-# ── Page: Exploratory Data Analysis ─────────────────────────────────────────
+# ── EDA (no ML artifacts) ───────────────────────────────────────────────────
 if page == "Exploratory Data Analysis":
     st.subheader("Exploratory Data Analysis")
-    st.caption("Descriptive statistics on the raw UCI Bank Marketing dataset (before modeling).")
-
     raw_df = get_raw_data()
     eda_summary = summary_statistics(raw_df)
 
@@ -158,8 +153,7 @@ if page == "Exploratory Data Analysis":
     m5.metric("Duration corr.", eda_summary["duration_corr_target"])
 
     st.warning(
-        "Call **duration** correlates strongly with the target (~0.39) but is only known "
-        "after a call ends — we exclude it from the production model."
+        "Call **duration** correlates with the target (~0.4) but is only known after a call ends."
     )
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -169,71 +163,89 @@ if page == "Exploratory Data Analysis":
     with tab1:
         c1, c2 = st.columns([1, 2])
         with c1:
-            st.plotly_chart(plotly_class_balance(raw_df), use_container_width=True)
+            st.plotly_chart(plotly_class_balance(raw_df), width="stretch")
         with c2:
-            st.plotly_chart(plotly_subscription_by(raw_df, "month"), use_container_width=True)
-        st.plotly_chart(plotly_subscription_by_binned(raw_df, "euribor3m", bins=10), use_container_width=True)
+            st.plotly_chart(plotly_subscription_by(raw_df, "month"), width="stretch")
+        st.plotly_chart(plotly_subscription_by_binned(raw_df, "euribor3m", bins=10), width="stretch")
         for img_name in ["eda_overview.png", "eda_campaign.png"]:
             img_path = OUT_DIR / img_name
             if img_path.exists():
-                st.image(str(img_path), caption=img_name.replace("_", " ").replace(".png", "").title())
+                st.image(str(img_path), caption=img_name.replace("_", " ").title())
 
     with tab2:
         num_col = st.selectbox("Numeric feature", NUM_FEATURES, index=0)
-        st.plotly_chart(plotly_numeric_hist(raw_df, num_col), use_container_width=True)
+        st.plotly_chart(plotly_numeric_hist(raw_df, num_col), width="stretch")
         c1, c2 = st.columns(2)
         with c1:
-            st.plotly_chart(
-                plotly_scatter_macro(raw_df, "age", "euribor3m"), use_container_width=True,
-            )
+            st.plotly_chart(plotly_scatter_macro(raw_df, "age", "euribor3m"), width="stretch")
         with c2:
-            st.plotly_chart(
-                plotly_scatter_macro(raw_df, "campaign", "cons.conf.idx"), use_container_width=True,
-            )
+            st.plotly_chart(plotly_scatter_macro(raw_df, "campaign", "cons.conf.idx"), width="stretch")
         if (OUT_DIR / "eda_numeric.png").exists():
-            st.image(str(OUT_DIR / "eda_numeric.png"), caption="Numeric distributions & correlation matrix")
+            st.image(str(OUT_DIR / "eda_numeric.png"))
 
     with tab3:
         cat_col = st.selectbox("Categorical feature", CAT_FEATURES, index=0)
-        top_n = st.slider("Show top N categories by rate", 5, 25, 12)
-        st.plotly_chart(
-            plotly_subscription_by(raw_df, cat_col, top_n=top_n), use_container_width=True,
-        )
+        top_n = st.slider("Top N categories", 5, 25, 12)
+        st.plotly_chart(plotly_subscription_by(raw_df, cat_col, top_n=top_n), width="stretch")
         if (OUT_DIR / "eda_categorical.png").exists():
-            st.image(str(OUT_DIR / "eda_categorical.png"), caption="Categorical subscription rates")
+            st.image(str(OUT_DIR / "eda_categorical.png"))
 
     with tab4:
-        st.plotly_chart(plotly_corr_heatmap(raw_df), use_container_width=True)
-        st.markdown("**Correlation with subscription (numeric features)**")
+        st.plotly_chart(plotly_corr_heatmap(raw_df), width="stretch")
         corr_df = eda_summary["corr_with_target"].reset_index()
         corr_df.columns = ["feature", "correlation"]
-        st.dataframe(corr_df, use_container_width=True, hide_index=True)
+        st.dataframe(corr_df, width="stretch", hide_index=True)
 
     with tab5:
-        st.plotly_chart(plotly_subscription_by(raw_df, "poutcome", top_n=None), use_container_width=True)
-        st.plotly_chart(plotly_numeric_hist(raw_df, "campaign"), use_container_width=True)
-        st.plotly_chart(plotly_numeric_hist(raw_df, "previous"), use_container_width=True)
+        st.plotly_chart(plotly_subscription_by(raw_df, "poutcome", top_n=None), width="stretch")
+        st.plotly_chart(plotly_numeric_hist(raw_df, "campaign"), width="stretch")
 
     with tab6:
-        st.markdown("**Numeric descriptive statistics**")
-        st.dataframe(eda_summary["numeric_summary"], use_container_width=True)
+        st.dataframe(eda_summary["numeric_summary"], width="stretch")
         if len(eda_summary["missing"]):
-            st.markdown("**Missing values**")
-            miss = pd.DataFrame({"count": eda_summary["missing"], "pct": eda_summary["missing_pct"]})
-            st.dataframe(miss, use_container_width=True)
+            st.dataframe(
+                pd.DataFrame({"count": eda_summary["missing"], "pct": eda_summary["missing_pct"]}),
+                width="stretch",
+            )
         else:
-            st.success("No missing values in the dataset.")
-        st.caption("Run `python src/eda.py` to regenerate static figures in outputs/.")
+            st.success("No missing values.")
 
-# ── Page: Model Performance ────────────────────────────────────────────────
-elif page == "Model Performance":
+    st.stop()
+
+# ── ML pages require artifacts ────────────────────────────────────────────────
+if not ARTIFACTS_PATH.exists():
+    st.error("Trained models not found.")
+    st.code("python src/pipeline.py", language="bash")
+    st.markdown(
+        "Or double-click **`preview.bat`** in the project folder (trains + opens browser)."
+    )
+    st.stop()
+
+try:
+    artifacts = get_artifacts()
+except Exception as e:
+    st.error(f"Could not load models: {e}")
+    st.stop()
+
+results = artifacts["results"]
+stats = artifacts["dataset_stats"]
+shap_info = artifacts["shap"]
+
+with st.sidebar:
+    st.subheader("Dataset stats")
+    st.write(f"**Total rows:** {stats['n_rows']:,}")
+    st.write(f"**Positive rate:** {stats['positive_rate']*100:.1f}%")
+
+res_sel = results[model_choice]
+
+if page == "Model Performance":
     st.subheader("Model Performance")
     metric_cards(res_sel)
 
     c1, c2 = st.columns(2)
     with c1:
         fig = go.Figure()
-        for key in ["v1_with_duration", "v2_no_duration"]:
+        for key in results:
             r = results[key]
             fpr, tpr, _ = roc_curve(r["y_test"], r["proba"])
             c = COLOR_LEAKY if key == "v1_with_duration" else COLOR_PRODUCTION
@@ -244,151 +256,94 @@ elif page == "Model Performance":
             ))
         fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dash", color="#6B7280")))
         fig.update_layout(template="plotly_dark", title="AUC-ROC", height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with c2:
         fig = go.Figure()
-        for key in ["v1_with_duration", "v2_no_duration"]:
+        for key in results:
             r = results[key]
             p, rec, _ = precision_recall_curve(r["y_test"], r["proba"])
             c = COLOR_LEAKY if key == "v1_with_duration" else COLOR_PRODUCTION
             fig.add_trace(go.Scatter(x=rec, y=p, mode="lines", name=VARIANTS[key]["label"], line=dict(color=c)))
         fig.update_layout(template="plotly_dark", title="Precision-Recall", height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
-    prod = results["v2_no_duration"]
-    threshold = st.slider("Classification threshold (production model)", 0.3, 0.7, 0.5, 0.05)
-    cm = confusion_at_threshold(prod["y_test"], prod["proba"], threshold)
+    if "v2_no_duration" in results:
+        prod = results["v2_no_duration"]
+        threshold = st.slider("Threshold (production model)", 0.3, 0.7, 0.5, 0.05)
+        cm = confusion_at_threshold(prod["y_test"], prod["proba"], threshold)
+        c3, c4 = st.columns(2)
+        with c3:
+            fig = go.Figure(data=go.Heatmap(
+                z=cm, x=["Pred No", "Pred Yes"], y=["Actual No", "Actual Yes"],
+                colorscale="Blues", text=cm, texttemplate="%{text}",
+            ))
+            fig.update_layout(template="plotly_dark", title=f"Confusion Matrix ({threshold})", height=380)
+            st.plotly_chart(fig, width="stretch")
+        with c4:
+            proba, y = prod["proba"], prod["y_test"]
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(x=proba[y == 0], name="No", opacity=0.6, marker_color="#6B7280", histnorm="probability density"))
+            fig.add_trace(go.Histogram(x=proba[y == 1], name="Yes", opacity=0.7, marker_color=COLOR_PRODUCTION, histnorm="probability density"))
+            fig.update_layout(template="plotly_dark", title="Score Distribution", barmode="overlay", height=380)
+            st.plotly_chart(fig, width="stretch")
 
-    c3, c4 = st.columns(2)
-    with c3:
-        fig = go.Figure(data=go.Heatmap(
-            z=cm, x=["Pred No", "Pred Yes"], y=["Actual No", "Actual Yes"],
-            colorscale="Blues", text=cm, texttemplate="%{text:,}",
-        ))
-        fig.update_layout(template="plotly_dark", title=f"Confusion Matrix (threshold={threshold})", height=380)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c4:
-        proba, y = prod["proba"], prod["y_test"]
-        fig = go.Figure()
-        fig.add_trace(go.Histogram(x=proba[y == 0], name="No", opacity=0.6, marker_color="#6B7280", histnorm="probability density"))
-        fig.add_trace(go.Histogram(x=proba[y == 1], name="Yes", opacity=0.7, marker_color=COLOR_PRODUCTION, histnorm="probability density"))
-        fig.update_layout(template="plotly_dark", title="Score Distribution (production)", barmode="overlay", height=380)
-        st.plotly_chart(fig, use_container_width=True)
-
-# ── Page 2: Lift & Business Value ────────────────────────────────────────────
 elif page == "Lift & Business Value":
     st.subheader("Lift & Business Value")
     prod = results["v2_no_duration"]
-    lc = prod["lift_curve"]
 
     fig = go.Figure()
-    for key in ["v1_with_duration", "v2_no_duration"]:
-        r = results[key]
-        lcc = r["lift_curve"]
+    for key in results:
+        lcc = results[key]["lift_curve"]
         c = COLOR_LEAKY if key == "v1_with_duration" else COLOR_PRODUCTION
         fig.add_trace(go.Scatter(x=lcc["pct"], y=lcc["lift"], mode="lines", name=VARIANTS[key]["label"], line=dict(color=c)))
-    fig.add_vline(x=20, line_dash="dash", line_color="#9CA3AF", annotation_text="20%")
+    fig.add_vline(x=20, line_dash="dash", line_color="#9CA3AF")
     fig.add_hline(y=1.0, line_dash="dot", line_color="#6B7280")
-    fig.update_layout(template="plotly_dark", title="Cumulative Lift Curve", xaxis_title="% Called", yaxis_title="Lift", height=420)
-    st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(template="plotly_dark", title="Cumulative Lift", height=420)
+    st.plotly_chart(fig, width="stretch")
 
-    fig2 = go.Figure()
-    for key in ["v1_with_duration", "v2_no_duration"]:
-        r = results[key]
-        lcc = r["lift_curve"]
-        c = COLOR_LEAKY if key == "v1_with_duration" else COLOR_PRODUCTION
-        fig2.add_trace(go.Scatter(
-            x=lcc["pct"], y=[x * 100 for x in lcc["recall"]], mode="lines",
-            name=VARIANTS[key]["label"], line=dict(color=c),
-        ))
-    fig2.add_trace(go.Scatter(x=[0, 100], y=[0, 100], mode="lines", line=dict(dash="dash", color="#6B7280"), name="Random"))
-    fig2.update_layout(template="plotly_dark", title="Recall vs Effort", xaxis_title="% Called", yaxis_title="% Subscribers Captured", height=420)
-    st.plotly_chart(fig2, use_container_width=True)
-
-    st.markdown("### ROI Calculator")
-    n_customers = st.slider("Customers in your list", 1000, 50000, 10000, 500)
-    pct_call = st.slider("% of list you can afford to call", 5, 50, 20, 1)
-
+    n_customers = st.slider("Customers in list", 1000, 50000, 10000, 500)
+    pct_call = st.slider("% to call", 5, 50, 20, 1)
     roi = roi_estimates(n_customers, pct_call, prod["y_test"], prod["proba"])
-    r1, r2, r3 = st.columns(3)
-    r1.metric("Calls placed", f"{roi['n_call']:,}")
-    r2.metric("Est. subscribers (model ranking)", f"{roi['model_subscribers']:.0f}")
-    r3.metric("Est. subscribers (random order)", f"{roi['random_subscribers']:.0f}")
-    st.success(
-        f"At **{pct_call}%** outreach on **{n_customers:,}** customers, model-ranked calling "
-        f"captures ~**{roi['recall_pct']:.0f}%** of all subscribers vs ~**{pct_call}%** with random dialing. "
-        f"Estimated **{roi['calls_saved']:,}** calls saved to reach the same subscriber count."
-    )
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Calls placed", f"{roi['n_call']:,}")
+    c2.metric("Subscribers (model)", f"{roi['model_subscribers']:.0f}")
+    c3.metric("Subscribers (random)", f"{roi['random_subscribers']:.0f}")
 
-# ── Page 3: SHAP Explorer ──────────────────────────────────────────────────────
 elif page == "SHAP Explorer":
-    st.subheader("SHAP Explorer (production model)")
-    importance = shap_info["importance"]
-    shap_vals = shap_info["values"]
-    X_sample = shap_info["X_sample"]
-    feat_names = shap_info["feature_names"]
-
+    st.subheader("SHAP Explorer")
     c1, c2 = st.columns(2)
     with c1:
-        fig, ax = plt.subplots(figsize=(8, 6), facecolor="#0f172a")
-        ax.set_facecolor("#0f172a")
-        plt.sca(ax)
+        fig, ax = plt.subplots(figsize=(8, 6))
         shap.summary_plot(
-            shap_vals, X_sample, feature_names=feat_names,
+            shap_info["values"], shap_info["X_sample"],
+            feature_names=shap_info["feature_names"],
             show=False, plot_type="dot", max_display=15,
         )
-        ax.set_title("SHAP Beeswarm (Top 15)", color="#e2e8f0")
         st.pyplot(fig, clear_figure=True)
-
     with c2:
-        top = importance.head(15).sort_values("mean_abs_shap", ascending=True)
-        fig = go.Figure(go.Bar(
-            x=top["mean_abs_shap"], y=top["feature"], orientation="h",
-            marker_color=COLOR_PRODUCTION,
-        ))
-        fig.update_layout(template="plotly_dark", title="Global SHAP Importance", height=480, margin=dict(l=120))
-        st.plotly_chart(fig, use_container_width=True)
-
-    st.markdown("### Plain-English: Top 5 Features")
+        top = shap_info["importance"].head(15).sort_values("mean_abs_shap", ascending=True)
+        fig = go.Figure(go.Bar(x=top["mean_abs_shap"], y=top["feature"], orientation="h", marker_color=COLOR_PRODUCTION))
+        fig.update_layout(template="plotly_dark", title="SHAP Importance", height=480)
+        st.plotly_chart(fig, width="stretch")
     for item in shap_info["narratives"]:
         arrow = "↑" if item["direction"] == "increases" else "↓"
         st.markdown(f"**{item['feature']}** {arrow} — {item['text']}")
 
-# ── Page: Score New Customers ────────────────────────────────────────────────
 elif page == "Score New Customers":
     st.subheader("Score New Customers")
-    st.caption("Upload a CSV with the UCI schema (semicolon-separated). Target column `y` is optional.")
-
     uploaded = st.file_uploader("Customer CSV", type=["csv"])
-    if uploaded is not None:
+    if uploaded:
         try:
             raw = pd.read_csv(uploaded, sep=";")
         except Exception:
             raw = pd.read_csv(uploaded)
-
         prod = results["v2_no_duration"]
         ranked = score_customers(raw, prod["clf"], prod["preprocessor"])
-
-        st.success(f"Scored **{len(ranked):,}** customers with production model (v2).")
-
-        fig = go.Figure(go.Histogram(x=ranked["subscription_probability"], nbinsx=40, marker_color=COLOR_PRODUCTION))
-        fig.update_layout(template="plotly_dark", title="Score Distribution (uploaded batch)", height=350)
-        st.plotly_chart(fig, use_container_width=True)
-
-        display_cols = [c for c in ranked.columns if c != "subscription_probability"][:6]
-        display_cols.append("subscription_probability")
-        st.markdown("**Top 10 highest-probability customers**")
-        st.dataframe(
-            ranked[display_cols].head(10).style.format({"subscription_probability": "{:.4f}"}),
-            use_container_width=True,
+        st.success(f"Scored {len(ranked):,} customers.")
+        st.plotly_chart(
+            go.Figure(go.Histogram(x=ranked["subscription_probability"], marker_color=COLOR_PRODUCTION)),
+            width="stretch",
         )
-
-        csv_out = ranked.to_csv(index=False)
-        st.download_button(
-            "Download ranked customer list as CSV",
-            csv_out,
-            file_name="ranked_customers.csv",
-            mime="text/csv",
-        )
+        st.dataframe(ranked.head(10), width="stretch")
+        st.download_button("Download ranked CSV", ranked.to_csv(index=False), "ranked_customers.csv", "text/csv")

@@ -188,8 +188,13 @@ Outputs: `outputs/artifacts.joblib`, `outputs/cv_comparison.csv`, `outputs/evalu
 ### Streamlit Dashboard
 
 ```bash
-streamlit run app.py
+# From project root (use python -m on Windows if streamlit is not on PATH)
+python -m streamlit run app.py
 ```
+
+**Windows one-click:** double-click `preview.bat` (trains models if needed, opens http://localhost:8501).
+
+If the page is blank, wait for the terminal message `You can now view your Streamlit app`, then open [http://localhost:8501](http://localhost:8501) manually.
 
 Interactive multi-page app: **exploratory data analysis**, model performance (ROC/PR, confusion matrix, score distribution), lift curves and ROI calculator, SHAP explorer, and CSV upload to rank new customers with the production model.
 
